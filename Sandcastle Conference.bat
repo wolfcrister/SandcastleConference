@@ -8,24 +8,25 @@ echo ================================================
 echo.
 
 REM Kill any existing process on port 8000
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
-    echo Stopping existing process on port 8000 (PID %%a)...
-    taskkill /PID %%a /F >nul 2>&1
-)
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }" 2>nul
 
 REM Brief pause to release the port
 timeout /t 1 /nobreak >nul
 
-REM Open the browser after a short delay (background)
-start "" cmd /c "timeout /t 3 /nobreak >nul & start http://localhost:8000"
-
-REM Launch Chainlit from venv or system Python
-if exist ".venv\Scripts\chainlit.exe" (
-    echo Starting from .venv...
-    .venv\Scripts\chainlit.exe run app.py
-) else (
-    echo Starting from system Python...
-    chainlit run app.py
+REM Check venv exists
+if not exist ".venv\Scripts\chainlit.exe" (
+    echo ERROR: .venv not found. Run: python -m venv .venv
+    echo Then: .venv\Scripts\pip install -r requirements.txt
+    pause
+    exit /b 1
 )
 
+echo Starting Chainlit...
+echo Opening browser in 3 seconds...
+start "" cmd /c "timeout /t 3 /nobreak >nul & start http://localhost:8000"
+
+.venv\Scripts\chainlit.exe run app.py
+
+echo.
+echo Chainlit has stopped.
 pause
