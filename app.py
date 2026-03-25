@@ -77,12 +77,22 @@ async def _run_group_round(user_msg: str) -> None:
             await thinking_msg.send()
 
             # Build the messages list the agent sees
+            # Use only the last N messages to stay within token limits
+            history = groupchat.messages
+            MAX_HISTORY = 20
+            if len(history) > MAX_HISTORY:
+                history = history[-MAX_HISTORY:]
+
             agent_messages = [{"role": "system", "content": agent.system_message}]
-            for m in groupchat.messages:
+            for m in history:
+                content = m["content"]
+                # Truncate very long messages in history
+                if len(content) > 2000:
+                    content = content[:2000] + "\n\n... [truncated]"
                 if m["name"] == agent.name:
-                    agent_messages.append({"role": "assistant", "content": m["content"]})
+                    agent_messages.append({"role": "assistant", "content": content})
                 else:
-                    agent_messages.append({"role": "user", "name": m["name"], "content": m["content"]})
+                    agent_messages.append({"role": "user", "name": m["name"], "content": content})
 
             # Call the LLM (with tool-call loop)
             MAX_TOOL_ROUNDS = 5
@@ -142,10 +152,13 @@ async def _run_group_round(user_msg: str) -> None:
                     else:
                         result = f"Unknown tool: {fn_name}"
 
+                    result_str = str(result)
+                    if len(result_str) > 4000:
+                        result_str = result_str[:4000] + "\n\n... [truncated]"
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": str(result),
+                        "content": result_str,
                     })
             else:
                 # Exceeded tool rounds — use whatever we have
