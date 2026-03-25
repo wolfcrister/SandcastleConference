@@ -6,6 +6,7 @@ Launch with:  chainlit run app.py
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ import chainlit as cl
 from chainlit.input_widget import Slider, Switch
 
 import tools
+from tools import TOOL_MAP
 from registry import PersonaRegistry
 from factory import build_agent, build_director
 from session_manager import SessionManager
@@ -82,15 +84,73 @@ async def _run_group_round(user_msg: str) -> None:
                 else:
                     agent_messages.append({"role": "user", "name": m["name"], "content": m["content"]})
 
-            # Call the LLM
-            try:
-                response = await asyncio.to_thread(
-                    agent.client.create,
-                    messages=agent_messages,
-                )
-                reply = response.choices[0].message.content or ""
-            except Exception as exc:
-                reply = f"⚠️ Error generating response: {exc}"
+            # Call the LLM (with tool-call loop)
+            MAX_TOOL_ROUNDS = 5
+            current_messages = list(agent_messages)
+            reply = ""
+
+            for _tool_round in range(MAX_TOOL_ROUNDS):
+                try:
+                    response = await asyncio.to_thread(
+                        agent.client.create,
+                        messages=current_messages,
+                    )
+                    choice = response.choices[0].message
+                except Exception as exc:
+                    reply = f"⚠️ Error generating response: {exc}"
+                    break
+
+                # Check for tool calls
+                tool_calls = getattr(choice, "tool_calls", None)
+                if not tool_calls:
+                    reply = choice.content or ""
+                    break
+
+                # Execute each tool call
+                # Show what tools are being invoked
+                tool_names = [tc.function.name for tc in tool_calls]
+                thinking_msg.content = f"🔧 Using tools: {', '.join(tool_names)}..."
+                await thinking_msg.update()
+
+                # Add the assistant message with tool_calls to context
+                current_messages.append({
+                    "role": "assistant",
+                    "content": choice.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+
+                for tc in tool_calls:
+                    fn_name = tc.function.name
+                    try:
+                        fn_args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        fn_args = {}
+
+                    fn = TOOL_MAP.get(fn_name)
+                    if fn:
+                        try:
+                            result = await asyncio.to_thread(fn, **fn_args)
+                        except Exception as exc:
+                            result = f"Error executing {fn_name}: {exc}"
+                    else:
+                        result = f"Unknown tool: {fn_name}"
+
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": str(result),
+                    })
+            else:
+                # Exceeded tool rounds — use whatever we have
+                if not reply:
+                    reply = "(Agent used tools but did not produce a final response)"
 
             # Record in GroupChat history
             groupchat.messages.append({"role": "assistant", "name": agent.name, "content": reply})
