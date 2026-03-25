@@ -14,8 +14,6 @@ import autogen
 import chainlit as cl
 from chainlit.input_widget import Slider, Switch
 
-import base64
-
 import tools
 from registry import PersonaRegistry
 from factory import build_agent, build_director
@@ -40,15 +38,9 @@ def _persona_display(p: dict) -> str:
     return f"{p['avatar']}  {p['name']} — {p['role']}"
 
 
-def _emoji_avatar_url(emoji: str) -> str:
-    """Convert an emoji character to a data-URI SVG for use as a Chainlit avatar."""
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">'
-        f'<text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="48">{emoji}</text>'
-        '</svg>'
-    )
-    b64 = base64.b64encode(svg.encode()).decode()
-    return f"data:image/svg+xml;base64,{b64}"
+def _author_label(persona: dict) -> str:
+    """Return 'emoji Name' for use as the Chainlit message author."""
+    return f"{persona['avatar']} {persona['name']}"
 
 
 async def _run_group_round(user_msg: str) -> None:
@@ -78,7 +70,8 @@ async def _run_group_round(user_msg: str) -> None:
             persona = personas_map.get(agent.name, {})
 
             # Show thinking indicator
-            thinking_msg = cl.Message(author=agent.name, content="")
+            author = _author_label(persona)
+            thinking_msg = cl.Message(author=author, content="")
             await thinking_msg.send()
 
             # Build the messages list the agent sees
@@ -105,7 +98,7 @@ async def _run_group_round(user_msg: str) -> None:
 
             # Update the thinking message with the actual reply
             thinking_msg.content = reply
-            thinking_msg.author = agent.name
+            thinking_msg.author = author
             await thinking_msg.update()
 
 
@@ -274,11 +267,6 @@ async def on_chat_start():
     # Default: all agents enabled
     agent_enabled = {a.name: True for a in agents}
     cl.user_session.set("agent_enabled", agent_enabled)
-
-    # Register avatars for each agent
-    for agent in agents:
-        persona = personas_map[agent.name]
-        await cl.Avatar(name=agent.name, url=_emoji_avatar_url(persona["avatar"])).send()
 
     # --- settings panel ----------------------------------------------------
     settings_widgets = [
