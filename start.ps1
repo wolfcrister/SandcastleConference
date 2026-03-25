@@ -2,7 +2,7 @@
 Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess -Unique |
     ForEach-Object {
-        Write-Host "Stopping existing process on port 8000 (PID $_)..."
+        Write-Host ('Stopping existing process on port 8000 (PID {0})...' -f $_)
         Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
     }
 Start-Sleep -Milliseconds 500
