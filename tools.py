@@ -63,7 +63,7 @@ def list_dir(
 def read_file(
     path: Annotated[str, "Relative path to a file inside the game project."]
 ) -> str:
-    """Read the text content of a file inside the game project (capped at ~10 000 chars)."""
+    """Read the full text content of a file (capped at ~4000 chars). Prefer read_lines for large files."""
     target = _safe_resolve(path)
     if not target.is_file():
         return f"Error: '{path}' is not a file."
@@ -72,12 +72,85 @@ def read_file(
     except Exception as exc:
         return f"Error reading file: {exc}"
     if len(text) > _MAX_READ_CHARS:
-        return text[:_MAX_READ_CHARS] + f"\n\n... [truncated — file is {len(text)} chars total]"
+        return text[:_MAX_READ_CHARS] + f"\n\n... [truncated — file is {len(text)} chars, {len(text.splitlines())} lines total. Use read_lines to read specific sections.]"
     return text
+
+
+def read_lines(
+    path: Annotated[str, "Relative path to a file inside the game project."],
+    start: Annotated[int, "Start line number (1-based)."] = 1,
+    end: Annotated[int, "End line number (1-based, inclusive)."] = 50,
+) -> str:
+    """Read specific lines from a file (1-based, inclusive). Use this for targeted reads of large files."""
+    target = _safe_resolve(path)
+    if not target.is_file():
+        return f"Error: '{path}' is not a file."
+    try:
+        all_lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as exc:
+        return f"Error reading file: {exc}"
+    total = len(all_lines)
+    start = max(1, start)
+    end = min(end, total)
+    if start > total:
+        return f"Error: file only has {total} lines."
+    selected = all_lines[start - 1 : end]
+    header = f"[{path} lines {start}-{end} of {total}]\n"
+    return header + "\n".join(f"{i}: {line}" for i, line in enumerate(selected, start=start))
+
+
+def search_file(
+    pattern: Annotated[str, "Text or keyword to search for (case-insensitive)."],
+    path: Annotated[str, "Relative path to a file, or '.' to search all files."] = ".",
+) -> str:
+    """Search for a text pattern in files. Returns matching lines with file paths and line numbers."""
+    target = _safe_resolve(path)
+    results: list[str] = []
+    max_results = 30
+    pattern_lower = pattern.lower()
+
+    if target.is_file():
+        files = [target]
+    elif target.is_dir():
+        files = []
+        for root, dirs, fnames in os.walk(target):
+            level = len(Path(root).relative_to(target).parts)
+            if level >= 3:
+                dirs.clear()
+                continue
+            for f in fnames:
+                fp = Path(root) / f
+                if fp.suffix in {".py", ".gd", ".json", ".cfg", ".md", ".txt", ".tscn", ".tres", ".cs", ".toml", ".yaml", ".yml", ".ini", ".sh", ".bat", ".ps1"}:
+                    files.append(fp)
+    else:
+        return f"Error: '{path}' not found."
+
+    for fp in files:
+        if len(results) >= max_results:
+            break
+        try:
+            lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            continue
+        rel = fp.relative_to(_project_root)
+        for i, line in enumerate(lines, 1):
+            if pattern_lower in line.lower():
+                results.append(f"{rel}:{i}: {line.rstrip()}")
+                if len(results) >= max_results:
+                    break
+
+    if not results:
+        return f"No matches for '{pattern}'."
+    output = "\n".join(results)
+    if len(results) >= max_results:
+        output += f"\n\n... [showing first {max_results} matches]"
+    return output
 
 
 # Map used by the agent factory to resolve tool name strings from personas.json
 TOOL_MAP: dict[str, callable] = {
     "list_dir": list_dir,
     "read_file": read_file,
+    "read_lines": read_lines,
+    "search_file": search_file,
 }
